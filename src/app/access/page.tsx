@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 interface AccessKey {
   id: string;
   holder_name: string;
-  role: "owner" | "partner" | "pet" | "guest";
+  role: "owner" | "partner" | "family" | "pet" | "guest";
   is_active: boolean;
   granted_at: string;
   expires_at: string | null;
@@ -15,6 +15,7 @@ interface AccessKey {
 const ROLES: { value: AccessKey["role"]; label: string; icon: string; color: string }[] = [
   { value: "owner", label: "소유주", icon: "👑", color: "text-warning" },
   { value: "partner", label: "파트너", icon: "💫", color: "text-purple" },
+  { value: "family", label: "가족", icon: "🏠", color: "text-warning" },
   { value: "pet", label: "펫", icon: "🐾", color: "text-accent" },
   { value: "guest", label: "손님", icon: "🎫", color: "text-info" },
 ];
@@ -73,8 +74,14 @@ export default function AccessPage() {
     setShowForm(true);
   }
 
+  function getDefaultExpiry() {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split("T")[0];
+  }
+
   function resetForm() {
-    setForm({ holder_name: "", role: "guest", is_active: true, expires_at: "" });
+    setForm({ holder_name: "", role: "guest", is_active: true, expires_at: getDefaultExpiry() });
     setEditingId(null);
     setShowForm(false);
   }
@@ -96,7 +103,7 @@ export default function AccessPage() {
       </div>
 
       {/* 역할별 요약 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         {ROLES.map((r) => {
           const count = keys.filter((k) => k.role === r.value && k.is_active).length;
           return (
@@ -120,7 +127,16 @@ export default function AccessPage() {
             </div>
             <div>
               <label className="block text-sm text-foreground/70 mb-1">역할</label>
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as AccessKey["role"] })} className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm">
+              <select value={form.role} onChange={(e) => {
+                const role = e.target.value as AccessKey["role"];
+                if (role === "guest") {
+                  const d = new Date();
+                  d.setDate(d.getDate() + 7);
+                  setForm({ ...form, role, expires_at: d.toISOString().split("T")[0] });
+                } else {
+                  setForm({ ...form, role, expires_at: "" });
+                }
+              }} className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm">
                 {ROLES.map((r) => <option key={r.value} value={r.value}>{r.icon} {r.label}</option>)}
               </select>
             </div>

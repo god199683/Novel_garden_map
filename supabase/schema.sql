@@ -6,7 +6,7 @@ CREATE TYPE grade AS ENUM ('F', 'E', 'D', 'C', 'B', 'A', 'S', 'SS', 'SSS', 'Ex')
 CREATE TYPE growth_stage AS ENUM ('seed', 'sprout', 'growing', 'mature', 'ex');
 CREATE TYPE growth_mode AS ENUM ('off', 'stage1', 'stage2');
 CREATE TYPE creature_type AS ENUM ('plant', 'animal', 'spirit', 'other');
-CREATE TYPE access_role AS ENUM ('owner', 'partner', 'pet', 'guest');
+CREATE TYPE access_role AS ENUM ('owner', 'partner', 'family', 'pet', 'guest');
 
 -- 구역 테이블
 CREATE TABLE zones (

@@ -1,17 +1,25 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "aCinemaL";
+  src: url("/fonts/aCinemaL.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --background: #0f172a;
-  --foreground: #e2e8f0;
-  --card: #1e293b;
-  --card-hover: #334155;
-  --border: #334155;
-  --accent: #22c55e;
-  --accent-dim: #166534;
-  --danger: #ef4444;
-  --warning: #f59e0b;
-  --info: #3b82f6;
-  --purple: #a855f7;
+  --background: #f0f7ff;
+  --foreground: #1e3a5f;
+  --card: #ffffff;
+  --card-hover: #e8f2ff;
+  --border: #c7ddf5;
+  --accent: #4aa8d8;
+  --accent-dim: #2d7aab;
+  --danger: #e55b5b;
+  --warning: #e8a63a;
+  --info: #5b9bd5;
+  --purple: #8b7ec8;
 }
 
 @theme inline {
@@ -31,7 +39,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: "Geist", Arial, Helvetica, sans-serif;
+  font-family: "aCinemaL", Arial, Helvetica, sans-serif;
 }
 
 /* 스크롤바 스타일 */
@@ -52,7 +60,7 @@ body {
 }
 .card-hover:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 25px rgba(74, 168, 216, 0.15);
 }
 
 /* 토글 스위치 */
@@ -60,13 +68,13 @@ body {
   position: relative;
   width: 48px;
   height: 24px;
-  background: #475569;
+  background: #b8cfe0;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.3s;
 }
 .toggle-switch.active {
-  background: #22c55e;
+  background: #4aa8d8;
 }
 .toggle-switch::after {
   content: "";
@@ -78,27 +86,28 @@ body {
   background: white;
   border-radius: 50%;
   transition: transform 0.3s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .toggle-switch.active::after {
   transform: translateX(24px);
 }
 
 /* 등급 뱃지 색상 */
-.grade-F { background: #6b7280; }
-.grade-E { background: #78716c; }
-.grade-D { background: #a3a3a3; }
-.grade-C { background: #22c55e; }
-.grade-B { background: #3b82f6; }
-.grade-A { background: #a855f7; }
-.grade-S { background: #f59e0b; }
-.grade-SS { background: #f97316; }
-.grade-SSS { background: #ef4444; }
-.grade-Ex { background: linear-gradient(135deg, #f59e0b, #ef4444, #a855f7); }
+.grade-F { background: #94a3b8; }
+.grade-E { background: #78909c; }
+.grade-D { background: #8da4bf; }
+.grade-C { background: #4caf84; }
+.grade-B { background: #5b9bd5; }
+.grade-A { background: #8b7ec8; }
+.grade-S { background: #e8a63a; }
+.grade-SS { background: #e08850; }
+.grade-SSS { background: #e55b5b; }
+.grade-Ex { background: linear-gradient(135deg, #e8a63a, #e55b5b, #8b7ec8); }
 
-/* 맥 펄스 글로우 */
+/* 펄스 글로우 */
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 5px currentColor; }
-  50% { box-shadow: 0 0 20px currentColor; }
+  50% { box-shadow: 0 0 15px currentColor; }
 }
 .pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
