@@ -22,6 +22,13 @@ interface Position {
   h: number;
 }
 
+interface ZoneGroup {
+  id: string;
+  name: string;
+  members: string[];
+  color: string;
+}
+
 interface MapMarker {
   id: string;
   emoji: string;
@@ -121,8 +128,6 @@ export default function MapPage() {
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
 
-  // 그룹 데이터: { id, name, members: string[], color }
-  interface ZoneGroup { id: string; name: string; members: string[]; color: string; }
   const [groups, setGroups] = useState<ZoneGroup[]>([]);
   const [groupNameInput, setGroupNameInput] = useState("");
 
@@ -191,6 +196,9 @@ export default function MapPage() {
     },
     [positions, regularZones]
   );
+
+  // 해당 키가 속한 그룹 찾기
+  const findGroup = useCallback((key: string) => groups.find((g) => g.members.includes(key)), [groups]);
 
   // 드래그
   const handleMouseDown = useCallback(
@@ -374,9 +382,6 @@ export default function MapPage() {
   const deleteGroup = (groupId: string) => {
     saveGroupsData(groups.filter((g) => g.id !== groupId));
   };
-
-  // 해당 키가 속한 그룹 찾기
-  const findGroup = (key: string) => groups.find((g) => g.members.includes(key));
 
   // 그룹 바운딩 박스
   const getGroupBounds = (group: ZoneGroup) => {
