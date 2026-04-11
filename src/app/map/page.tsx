@@ -551,11 +551,11 @@ export default function MapPage() {
         {/* 맵 뷰포트 */}
         <div
           className={`relative rounded-2xl border-2 overflow-hidden flex-1 ${editMode ? "border-accent border-dashed" : "border-border"}`}
-          style={{ minHeight: "560px", cursor: isPanning ? "grabbing" : editMode ? "grab" : "default" }}
+          style={{ height: "calc(100vh - 220px)", minHeight: "400px", cursor: isPanning ? "grabbing" : editMode ? "grab" : "default" }}
           onWheel={handleWheel} onMouseDown={(e) => { setLayerMenu(null); handleMapMouseDown(e); }} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
         >
           <div ref={mapRef} className="absolute origin-top-left"
-            style={{ width: `${mapSize}%`, height: `${mapSize}%`, minWidth: "560px", minHeight: "560px", transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, userSelect: "none", position: "relative" }}
+            style={{ width: `${mapSize}%`, height: `${mapSize}%`, minWidth: "560px", minHeight: "480px", transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, userSelect: "none", position: "relative" }}
             data-pannable="true"
           >
             {/* 배경 */}
