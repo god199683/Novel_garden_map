@@ -106,6 +106,7 @@ export default function MapPage() {
   const [dragMode, setDragMode] = useState<DragMode>("move");
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragStartPos, setDragStartPos] = useState<Position>({ x: 0, y: 0, w: 0, h: 0 });
+  const [dragGroupStartPositions, setDragGroupStartPositions] = useState<Record<string, Position>>({});
   const mapRef = useRef<HTMLDivElement>(null);
 
   // 줌 & 팬
@@ -116,9 +117,14 @@ export default function MapPage() {
   const [panStartOffset, setPanStartOffset] = useState({ x: 0, y: 0 });
   const [mapSize, setMapSize] = useState(100);
 
-  // 구역 합치기
+  // 구역 합치기 (그룹화 - 삭제 없이 하나의 영역으로)
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+
+  // 그룹 데이터: { id, name, members: string[], color }
+  interface ZoneGroup { id: string; name: string; members: string[]; color: string; }
+  const [groups, setGroups] = useState<ZoneGroup[]>([]);
+  const [groupNameInput, setGroupNameInput] = useState("");
 
   // 마커 (범례/장식)
   const [markers, setMarkers] = useState<MapMarker[]>(DEFAULT_MARKERS);
@@ -129,11 +135,12 @@ export default function MapPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const [zonesRes, settingsRes, sizeRes, markersRes] = await Promise.all([
+      const [zonesRes, settingsRes, sizeRes, markersRes, groupsRes] = await Promise.all([
         supabase.from("zones").select("*"),
         supabase.from("garden_settings").select("*").eq("key", "zone_positions").single(),
         supabase.from("garden_settings").select("*").eq("key", "map_size").single(),
         supabase.from("garden_settings").select("*").eq("key", "map_markers").single(),
+        supabase.from("garden_settings").select("*").eq("key", "zone_groups").single(),
       ]);
       setZones((zonesRes.data as Zone[]) || []);
 
@@ -155,6 +162,15 @@ export default function MapPage() {
         try { setMarkers(JSON.parse(markersRes.data.value)); } catch { setMarkers(loadMarkers()); }
       } else {
         setMarkers(loadMarkers());
+      }
+
+      if (groupsRes.data?.value) {
+        try { setGroups(JSON.parse(groupsRes.data.value)); } catch {}
+      } else {
+        try {
+          const saved = localStorage.getItem("garden_map_groups");
+          if (saved) setGroups(JSON.parse(saved));
+        } catch {}
       }
 
       setLoading(false);
@@ -186,8 +202,21 @@ export default function MapPage() {
       setDragStartPos({ ...getPos(key) });
       setDragMode(mode);
       setDragging(key);
+      // 그룹 이동: 그룹 멤버들의 시작 위치 저장
+      if (mode === "move") {
+        const group = findGroup(key);
+        if (group) {
+          const sp: Record<string, Position> = {};
+          group.members.forEach((m) => { sp[m] = { ...getPos(m) }; });
+          setDragGroupStartPositions(sp);
+        } else {
+          setDragGroupStartPositions({});
+        }
+      } else {
+        setDragGroupStartPositions({});
+      }
     },
-    [editMode, getPos]
+    [editMode, getPos, findGroup]
   );
 
   const handleMouseMove = useCallback(
@@ -215,10 +244,25 @@ export default function MapPage() {
       const sp = dragStartPos;
 
       if (dragMode === "move") {
-        setPositions((prev) => ({
-          ...prev,
-          [dragging]: { ...sp, x: Math.max(0, Math.min(100 - sp.w, sp.x + dx)), y: Math.max(0, Math.min(100 - sp.h, sp.y + dy)) },
-        }));
+        const group = findGroup(dragging);
+        if (group && Object.keys(dragGroupStartPositions).length > 0) {
+          // 그룹 전체 이동
+          setPositions((prev) => {
+            const updated = { ...prev };
+            group.members.forEach((m) => {
+              const msp = dragGroupStartPositions[m];
+              if (msp) {
+                updated[m] = { ...msp, x: Math.max(0, Math.min(100 - msp.w, msp.x + dx)), y: Math.max(0, Math.min(100 - msp.h, msp.y + dy)) };
+              }
+            });
+            return updated;
+          });
+        } else {
+          setPositions((prev) => ({
+            ...prev,
+            [dragging]: { ...sp, x: Math.max(0, Math.min(100 - sp.w, sp.x + dx)), y: Math.max(0, Math.min(100 - sp.h, sp.y + dy)) },
+          }));
+        }
       } else {
         let { x, y, w, h } = sp;
         if (dragMode.includes("r") && !dragMode.includes("l")) w = Math.max(MIN_SIZE, Math.min(100 - x, sp.w + dx));
@@ -242,7 +286,7 @@ export default function MapPage() {
         setPositions((prev) => ({ ...prev, [dragging]: { x, y, w, h } }));
       }
     },
-    [dragging, dragMode, dragStart, dragStartPos, isPanning, panStart, panStartOffset, draggingMarker]
+    [dragging, dragMode, dragStart, dragStartPos, dragGroupStartPositions, isPanning, panStart, panStartOffset, draggingMarker, findGroup]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -296,66 +340,52 @@ export default function MapPage() {
     return key;
   };
 
-  const executeMerge = async () => {
+  const GROUP_COLORS = ["#f97316", "#8b5cf6", "#ec4899", "#14b8a6", "#eab308", "#6366f1", "#ef4444", "#22c55e"];
+
+  const saveGroupsData = (g: ZoneGroup[]) => {
+    setGroups(g);
+    localStorage.setItem("garden_map_groups", JSON.stringify(g));
+    supabase.from("garden_settings").upsert(
+      { key: "zone_groups", value: JSON.stringify(g), description: "맵 구역 그룹 데이터" },
+      { onConflict: "key" }
+    ).then(() => {});
+  };
+
+  // 그룹 생성 (삭제 없이 하나의 영역으로 묶기)
+  const executeMerge = () => {
     if (mergeSelection.length < 2) return;
-
-    // 선택된 키들에 대응하는 zone 데이터와 위치 수집
-    const selectedItems = mergeSelection.map((key) => ({
-      key,
-      zone: getZoneByKey(key),
-      pos: getPos(key),
-    }));
-
-    // 첫 번째를 primary로
-    const primary = selectedItems[0];
-    const others = selectedItems.slice(1);
-
-    if (!primary.zone) {
-      alert("첫 번째 선택 항목에 연결된 구역이 없습니다.");
-      return;
-    }
-
-    // 존재하는 zone들의 동식물 합산
-    const allZones = selectedItems.filter((i) => i.zone).map((i) => i.zone!);
-    const totalCreatures = allZones.reduce((s, z) => s + z.creature_count, 0);
-    const totalPlants = allZones.reduce((s, z) => s + z.plant_count, 0);
-
-    // 바운딩 박스
-    const allPos = selectedItems.map((i) => i.pos);
-    const minX = Math.min(...allPos.map((p) => p.x));
-    const minY = Math.min(...allPos.map((p) => p.y));
-    const maxX = Math.max(...allPos.map((p) => p.x + p.w));
-    const maxY = Math.max(...allPos.map((p) => p.y + p.h));
-
-    const mergedNames = others.map((o) => getMergeLabel(o.key));
-
-    // primary zone 업데이트
-    await supabase.from("zones").update({
-      creature_count: totalCreatures,
-      plant_count: totalPlants,
-      description: `${primary.zone.description || ""} [합병: ${mergedNames.join(", ")}]`.trim(),
-    }).eq("id", primary.zone.id);
-
-    // 나머지 zone이 있으면 데이터 이전 후 삭제
-    for (const other of others) {
-      if (other.zone) {
-        await supabase.from("creatures").update({ zone_id: primary.zone.id }).eq("zone_id", other.zone.id);
-        await supabase.from("byproducts").update({ source_zone_id: primary.zone.id }).eq("source_zone_id", other.zone.id);
-        await supabase.from("zones").delete().eq("id", other.zone.id);
-      }
-    }
-
-    // 위치 업데이트: primary 키에 통합 바운딩 박스 적용, 나머지 키 삭제
-    const newPositions = { ...positions };
-    newPositions[primary.key] = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-    others.forEach((o) => delete newPositions[o.key]);
-    setPositions(newPositions);
-    savePositions(newPositions);
-
+    const name = groupNameInput.trim() || mergeSelection.map((k) => getMergeLabel(k)).join(" + ");
+    // 선택된 멤버를 기존 그룹에서 제거
+    const cleaned = groups
+      .map((g) => ({ ...g, members: g.members.filter((m) => !mergeSelection.includes(m)) }))
+      .filter((g) => g.members.length > 1);
+    const newGroup: ZoneGroup = {
+      id: Date.now().toString(),
+      name,
+      members: [...mergeSelection],
+      color: GROUP_COLORS[groups.length % GROUP_COLORS.length],
+    };
+    saveGroupsData([...cleaned, newGroup]);
     setMergeMode(false);
     setMergeSelection([]);
-    const { data } = await supabase.from("zones").select("*").order("created_at");
-    setZones((data as Zone[]) || []);
+    setGroupNameInput("");
+  };
+
+  const deleteGroup = (groupId: string) => {
+    saveGroupsData(groups.filter((g) => g.id !== groupId));
+  };
+
+  // 해당 키가 속한 그룹 찾기
+  const findGroup = (key: string) => groups.find((g) => g.members.includes(key));
+
+  // 그룹 바운딩 박스
+  const getGroupBounds = (group: ZoneGroup) => {
+    const memberPos = group.members.map((m) => getPos(m));
+    const minX = Math.min(...memberPos.map((p) => p.x));
+    const minY = Math.min(...memberPos.map((p) => p.y));
+    const maxX = Math.max(...memberPos.map((p) => p.x + p.w));
+    const maxY = Math.max(...memberPos.map((p) => p.y + p.h));
+    return { x: minX - 1, y: minY - 1, w: maxX - minX + 2, h: maxY - minY + 2 };
   };
 
   // 마커 추가/삭제
@@ -430,7 +460,7 @@ export default function MapPage() {
         <div>
           <h1 className="text-2xl font-bold">🗺️ 정원 맵</h1>
           <p className="text-foreground/50 text-sm mt-1">
-            {mergeMode ? "합칠 구역을 2개 이상 선택한 후 합치기를 누르세요"
+            {mergeMode ? "묶을 요소를 2개 이상 선택한 후 묶기를 누르세요"
               : editMode ? "구역을 드래그하여 이동, 모서리를 드래그하여 크기 조절"
               : "세계수와 호수를 중심으로 구역을 시각적으로 확인합니다"}
           </p>
@@ -438,11 +468,13 @@ export default function MapPage() {
         <div className="flex gap-2 flex-wrap justify-end">
           {mergeMode ? (
             <>
+              <input type="text" value={groupNameInput} onChange={(e) => setGroupNameInput(e.target.value)}
+                placeholder="그룹 이름 (선택)" className="px-3 py-2 bg-background border border-border rounded-lg text-sm w-32" />
               <button onClick={executeMerge} disabled={mergeSelection.length < 2}
                 className={`px-4 py-2 rounded-lg text-sm font-medium ${mergeSelection.length >= 2 ? "bg-accent text-white hover:bg-accent/80" : "bg-card border border-border text-foreground/30 cursor-not-allowed"}`}>
-                🔗 합치기 ({mergeSelection.length}개)
+                🔗 묶기 ({mergeSelection.length}개)
               </button>
-              <button onClick={() => { setMergeMode(false); setMergeSelection([]); }}
+              <button onClick={() => { setMergeMode(false); setMergeSelection([]); setGroupNameInput(""); }}
                 className="px-4 py-2 bg-card border border-border text-foreground/70 rounded-lg text-sm font-medium hover:bg-card-hover">취소</button>
             </>
           ) : (
@@ -450,7 +482,7 @@ export default function MapPage() {
               {editMode && (
                 <>
                   <button onClick={() => { setMergeMode(true); setMergeSelection([]); }}
-                    className="px-4 py-2 bg-info/20 text-info rounded-lg text-sm font-medium hover:bg-info/30">🔗 구역 합치기</button>
+                    className="px-4 py-2 bg-info/20 text-info rounded-lg text-sm font-medium hover:bg-info/30">🔗 구역 묶기</button>
                   <button onClick={resetPositions}
                     className="px-4 py-2 bg-danger/20 text-danger rounded-lg text-sm font-medium hover:bg-danger/30">초기화</button>
                 </>
@@ -509,9 +541,22 @@ export default function MapPage() {
             {mergeMode && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 rounded-full text-xs font-medium pointer-events-none"
                 style={{ background: "rgba(59,130,246,0.9)", color: "white" }}>
-                세계수·호수·저택·구역 모두 클릭하여 합치기 가능
+                세계수·호수·저택·구역 모두 클릭하여 묶기 가능
               </div>
             )}
+
+            {/* 그룹 바운딩 박스 */}
+            {groups.map((group) => {
+              const bounds = getGroupBounds(group);
+              return (
+                <div key={group.id} className="absolute rounded-2xl border-2 border-dashed pointer-events-none z-0"
+                  style={{ top: `${bounds.y}%`, left: `${bounds.x}%`, width: `${bounds.w}%`, height: `${bounds.h}%`, borderColor: group.color, background: `${group.color}08` }}>
+                  <span className="absolute -top-3 left-2 px-2 py-0.5 rounded text-[10px] font-bold" style={{ background: group.color, color: "white" }}>
+                    {group.name}
+                  </span>
+                </div>
+              );
+            })}
 
             {/* 핵심 요소: 세계수, 호수, 저택 (각각 구역 통합) */}
             {CORE_ELEMENTS.map((core) => {
@@ -651,10 +696,34 @@ export default function MapPage() {
             <div className="bg-card rounded-xl border border-border p-5 text-center text-foreground/40">
               <span className="text-3xl block mb-3">{mergeMode ? "🔗" : editMode ? "✏️" : "👆"}</span>
               <p className="text-sm whitespace-pre-line">
-                {mergeMode ? "합칠 구역을 2개 이상 클릭하세요.\n첫 번째 선택한 구역에 나머지가 합쳐집니다."
+                {mergeMode ? "묶을 요소를 2개 이상 클릭하세요.\n삭제 없이 하나의 영역으로 묶입니다.\n묶인 요소는 함께 이동됩니다."
                   : editMode ? "드래그: 이동\n모서리/변: 크기 조절\n장식: 드래그로 이동, ✕로 삭제"
                   : "맵에서 구역을 클릭하면\n상세 정보가 표시됩니다"}
               </p>
+            </div>
+          )}
+
+          {/* 그룹 목록 */}
+          {groups.length > 0 && (
+            <div className="bg-card rounded-xl border border-border p-4 mt-4">
+              <h4 className="text-sm font-semibold mb-3">🔗 묶인 구역</h4>
+              <div className="space-y-3">
+                {groups.map((group) => (
+                  <div key={group.id} className="rounded-lg border p-3" style={{ borderColor: group.color + "60" }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: group.color, color: "white" }}>{group.name}</span>
+                      {editMode && (
+                        <button onClick={() => deleteGroup(group.id)} className="text-[10px] text-danger hover:text-danger/80">해제</button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {group.members.map((m) => (
+                        <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-background text-foreground/60">{getMergeLabel(m)}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
