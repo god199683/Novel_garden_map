@@ -20,6 +20,7 @@ interface Position {
   y: number;
   w: number;
   h: number;
+  z?: number; // 레이어 순서 (높을수록 앞)
 }
 
 interface ZoneGroup {
@@ -131,6 +132,9 @@ export default function MapPage() {
   const [groups, setGroups] = useState<ZoneGroup[]>([]);
   const [groupNameInput, setGroupNameInput] = useState("");
 
+  // 레이어 순서 컨텍스트 메뉴
+  const [layerMenu, setLayerMenu] = useState<{ key: string; x: number; y: number } | null>(null);
+
   // 마커 (범례/장식)
   const [markers, setMarkers] = useState<MapMarker[]>(DEFAULT_MARKERS);
   const [showMarkerForm, setShowMarkerForm] = useState(false);
@@ -196,6 +200,31 @@ export default function MapPage() {
     },
     [positions, regularZones]
   );
+
+  // z-index 가져오기 (기본값 10)
+  const getZ = useCallback((key: string): number => {
+    const pos = positions[key];
+    return pos?.z ?? 10;
+  }, [positions]);
+
+  // 레이어 순서 변경
+  const sendToBack = (key: string) => {
+    const allZ = Object.values(positions).map((p) => p.z ?? 10);
+    const minZ = Math.min(...allZ);
+    const updated = { ...positions, [key]: { ...getPos(key), z: minZ - 1 } };
+    setPositions(updated);
+    savePositions(updated);
+    setLayerMenu(null);
+  };
+
+  const bringToFront = (key: string) => {
+    const allZ = Object.values(positions).map((p) => p.z ?? 10);
+    const maxZ = Math.max(...allZ);
+    const updated = { ...positions, [key]: { ...getPos(key), z: maxZ + 1 } };
+    setPositions(updated);
+    savePositions(updated);
+    setLayerMenu(null);
+  };
 
   // 해당 키가 속한 그룹 찾기
   const findGroup = useCallback((key: string) => groups.find((g) => g.members.includes(key)), [groups]);
@@ -523,7 +552,7 @@ export default function MapPage() {
         <div
           className={`relative rounded-2xl border-2 overflow-hidden flex-1 ${editMode ? "border-accent border-dashed" : "border-border"}`}
           style={{ minHeight: "560px", cursor: isPanning ? "grabbing" : editMode ? "grab" : "default" }}
-          onWheel={handleWheel} onMouseDown={handleMapMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
+          onWheel={handleWheel} onMouseDown={(e) => { setLayerMenu(null); handleMapMouseDown(e); }} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
         >
           <div ref={mapRef} className="absolute origin-top-left"
             style={{ width: `${mapSize}%`, height: `${mapSize}%`, minWidth: "560px", minHeight: "560px", transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, userSelect: "none", position: "relative" }}
@@ -571,9 +600,10 @@ export default function MapPage() {
               return (
                 <div
                   key={core.key}
-                  className={`absolute flex flex-col items-center justify-center ${isLake ? "z-0" : "z-10"} ${mergeMode ? "cursor-pointer" : editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer hover:shadow-lg"} ${dragging === core.key ? "opacity-70" : ""} ${selectedZone === core.key && !editMode && !mergeMode ? "ring-4 ring-accent shadow-xl" : ""} ${mergeSelection.includes(core.key) ? "ring-4 ring-blue-500 shadow-xl" : ""}`}
+                  className={`absolute flex flex-col items-center justify-center ${mergeMode ? "cursor-pointer" : editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer hover:shadow-lg"} ${dragging === core.key ? "opacity-70" : ""} ${selectedZone === core.key && !editMode && !mergeMode ? "ring-4 ring-accent shadow-xl" : ""} ${mergeSelection.includes(core.key) ? "ring-4 ring-blue-500 shadow-xl" : ""}`}
                   style={{
                     top: `${pos.y}%`, left: `${pos.x}%`, width: `${pos.w}%`, height: `${pos.h}%`,
+                    zIndex: getZ(core.key),
                     ...(isLake ? {
                       background: "radial-gradient(ellipse, rgba(96,185,235,0.5) 0%, rgba(96,185,235,0.15) 70%, transparent 100%)",
                       borderRadius: "50%",
@@ -588,6 +618,11 @@ export default function MapPage() {
                     if (mergeMode) { e.preventDefault(); e.stopPropagation(); toggleMergeSelect(core.key); return; }
                     if (editMode) handleMouseDown(core.key, e);
                     else setSelectedZone(core.key);
+                  }}
+                  onContextMenu={(e) => {
+                    if (!editMode) return;
+                    e.preventDefault(); e.stopPropagation();
+                    setLayerMenu({ key: core.key, x: e.clientX, y: e.clientY });
                   }}
                 >
                   {mergeSelection.includes(core.key) && (
@@ -614,13 +649,14 @@ export default function MapPage() {
               return (
                 <div
                   key={zone.id}
-                  className={`absolute z-20 rounded-xl border-2 flex flex-col items-center justify-center transition-shadow ${
+                  className={`absolute rounded-xl border-2 flex flex-col items-center justify-center transition-shadow ${
                     mergeMode ? "cursor-pointer" : editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer hover:scale-105"
                   } ${selectedZone === zone.name && !editMode && !mergeMode ? "ring-4 ring-accent shadow-xl" : ""} ${
                     isMergeSelected ? "ring-4 ring-blue-500 shadow-xl" : ""
                   } ${dragging === zone.name ? "opacity-70 shadow-2xl" : "hover:shadow-lg"}`}
                   style={{
                     top: `${pos.y}%`, left: `${pos.x}%`, width: `${pos.w}%`, height: `${pos.h}%`,
+                    zIndex: getZ(zone.name),
                     background: isMergeSelected ? `${zone.color}60` : `${zone.color}30`,
                     borderColor: isMergeSelected ? "#3b82f6" : zone.color,
                     transition: dragging === zone.name ? "none" : "box-shadow 0.2s, transform 0.2s",
@@ -629,6 +665,11 @@ export default function MapPage() {
                     if (mergeMode) { e.preventDefault(); e.stopPropagation(); toggleMergeSelect(zone.name); }
                     else if (editMode) handleMouseDown(zone.name, e);
                     else setSelectedZone(zone.name);
+                  }}
+                  onContextMenu={(e) => {
+                    if (!editMode) return;
+                    e.preventDefault(); e.stopPropagation();
+                    setLayerMenu({ key: zone.name, x: e.clientX, y: e.clientY });
                   }}
                 >
                   {isMergeSelected && (
@@ -666,6 +707,31 @@ export default function MapPage() {
             ))}
           </div>
         </div>
+
+        {/* 레이어 순서 컨텍스트 메뉴 */}
+        {layerMenu && (
+          <div
+            className="fixed bg-card rounded-xl border border-border shadow-xl py-2 z-[9999]"
+            style={{ top: layerMenu.y, left: layerMenu.x }}
+            onMouseLeave={() => setLayerMenu(null)}
+          >
+            <div className="px-3 py-1 text-[10px] text-foreground/40 border-b border-border mb-1">
+              {getMergeLabel(layerMenu.key)}
+            </div>
+            <button
+              onClick={() => bringToFront(layerMenu.key)}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-card-hover flex items-center gap-2"
+            >
+              <span className="text-xs">⬆️</span> 맨 앞으로
+            </button>
+            <button
+              onClick={() => sendToBack(layerMenu.key)}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-card-hover flex items-center gap-2"
+            >
+              <span className="text-xs">⬇️</span> 맨 뒤로
+            </button>
+          </div>
+        )}
 
         {/* 사이드 패널 */}
         <div className="w-72 shrink-0">
