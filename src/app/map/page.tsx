@@ -277,35 +277,81 @@ export default function MapPage() {
     supabase.from("garden_settings").upsert({ key: "map_size", value: JSON.stringify(size), description: "맵 캔버스 크기" }, { onConflict: "key" }).then(() => {});
   };
 
-  // 합치기
-  const toggleMergeSelect = (zoneId: string) => {
-    setMergeSelection((prev) => prev.includes(zoneId) ? prev.filter((id) => id !== zoneId) : [...prev, zoneId]);
+  // 합치기 - mergeSelection은 포지션 키(zone.name 또는 __worldtree 등) 기반
+  const toggleMergeSelect = (key: string) => {
+    setMergeSelection((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+  };
+
+  // 키로부터 zone 찾기 (핵심 요소는 연결된 zone, 일반 구역은 이름으로)
+  const getZoneByKey = (key: string): Zone | undefined => {
+    const core = CORE_ELEMENTS.find((c) => c.key === key);
+    if (core) return zones.find((z) => z.name === core.zoneName);
+    return zones.find((z) => z.name === key);
+  };
+
+  // 키의 표시 이름
+  const getMergeLabel = (key: string): string => {
+    const core = CORE_ELEMENTS.find((c) => c.key === key);
+    if (core) return core.label;
+    return key;
   };
 
   const executeMerge = async () => {
     if (mergeSelection.length < 2) return;
-    const selectedZones = zones.filter((z) => mergeSelection.includes(z.id));
-    const primary = selectedZones[0];
-    const others = selectedZones.slice(1);
-    const totalCreatures = selectedZones.reduce((s, z) => s + z.creature_count, 0);
-    const totalPlants = selectedZones.reduce((s, z) => s + z.plant_count, 0);
-    const allPos = selectedZones.map((z) => getPos(z.name));
+
+    // 선택된 키들에 대응하는 zone 데이터와 위치 수집
+    const selectedItems = mergeSelection.map((key) => ({
+      key,
+      zone: getZoneByKey(key),
+      pos: getPos(key),
+    }));
+
+    // 첫 번째를 primary로
+    const primary = selectedItems[0];
+    const others = selectedItems.slice(1);
+
+    if (!primary.zone) {
+      alert("첫 번째 선택 항목에 연결된 구역이 없습니다.");
+      return;
+    }
+
+    // 존재하는 zone들의 동식물 합산
+    const allZones = selectedItems.filter((i) => i.zone).map((i) => i.zone!);
+    const totalCreatures = allZones.reduce((s, z) => s + z.creature_count, 0);
+    const totalPlants = allZones.reduce((s, z) => s + z.plant_count, 0);
+
+    // 바운딩 박스
+    const allPos = selectedItems.map((i) => i.pos);
     const minX = Math.min(...allPos.map((p) => p.x));
     const minY = Math.min(...allPos.map((p) => p.y));
     const maxX = Math.max(...allPos.map((p) => p.x + p.w));
     const maxY = Math.max(...allPos.map((p) => p.y + p.h));
 
-    await supabase.from("zones").update({ creature_count: totalCreatures, plant_count: totalPlants, description: `${primary.description || ""} [합병: ${others.map((z) => z.name).join(", ")}]`.trim() }).eq("id", primary.id);
+    const mergedNames = others.map((o) => getMergeLabel(o.key));
+
+    // primary zone 업데이트
+    await supabase.from("zones").update({
+      creature_count: totalCreatures,
+      plant_count: totalPlants,
+      description: `${primary.zone.description || ""} [합병: ${mergedNames.join(", ")}]`.trim(),
+    }).eq("id", primary.zone.id);
+
+    // 나머지 zone이 있으면 데이터 이전 후 삭제
     for (const other of others) {
-      await supabase.from("creatures").update({ zone_id: primary.id }).eq("zone_id", other.id);
-      await supabase.from("byproducts").update({ source_zone_id: primary.id }).eq("source_zone_id", other.id);
-      await supabase.from("zones").delete().eq("id", other.id);
+      if (other.zone) {
+        await supabase.from("creatures").update({ zone_id: primary.zone.id }).eq("zone_id", other.zone.id);
+        await supabase.from("byproducts").update({ source_zone_id: primary.zone.id }).eq("source_zone_id", other.zone.id);
+        await supabase.from("zones").delete().eq("id", other.zone.id);
+      }
     }
+
+    // 위치 업데이트: primary 키에 통합 바운딩 박스 적용, 나머지 키 삭제
     const newPositions = { ...positions };
-    newPositions[primary.name] = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-    others.forEach((z) => delete newPositions[z.name]);
+    newPositions[primary.key] = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    others.forEach((o) => delete newPositions[o.key]);
     setPositions(newPositions);
     savePositions(newPositions);
+
     setMergeMode(false);
     setMergeSelection([]);
     const { data } = await supabase.from("zones").select("*").order("created_at");
@@ -463,7 +509,7 @@ export default function MapPage() {
             {mergeMode && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 rounded-full text-xs font-medium pointer-events-none"
                 style={{ background: "rgba(59,130,246,0.9)", color: "white" }}>
-                합칠 구역을 클릭하여 선택하세요
+                세계수·호수·저택·구역 모두 클릭하여 합치기 가능
               </div>
             )}
 
@@ -475,7 +521,7 @@ export default function MapPage() {
               return (
                 <div
                   key={core.key}
-                  className={`absolute flex flex-col items-center justify-center ${isLake ? "z-0" : "z-10"} ${editMode && !isSpecialMode ? "cursor-grab active:cursor-grabbing" : !isSpecialMode ? "cursor-pointer hover:shadow-lg" : ""} ${dragging === core.key ? "opacity-70" : ""} ${selectedZone === core.key && !editMode ? "ring-4 ring-accent shadow-xl" : ""}`}
+                  className={`absolute flex flex-col items-center justify-center ${isLake ? "z-0" : "z-10"} ${mergeMode ? "cursor-pointer" : editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer hover:shadow-lg"} ${dragging === core.key ? "opacity-70" : ""} ${selectedZone === core.key && !editMode && !mergeMode ? "ring-4 ring-accent shadow-xl" : ""} ${mergeSelection.includes(core.key) ? "ring-4 ring-blue-500 shadow-xl" : ""}`}
                   style={{
                     top: `${pos.y}%`, left: `${pos.x}%`, width: `${pos.w}%`, height: `${pos.h}%`,
                     ...(isLake ? {
@@ -489,11 +535,14 @@ export default function MapPage() {
                     transition: dragging === core.key ? "none" : "box-shadow 0.2s",
                   }}
                   onMouseDown={(e) => {
-                    if (isSpecialMode) return;
+                    if (mergeMode) { e.preventDefault(); e.stopPropagation(); toggleMergeSelect(core.key); return; }
                     if (editMode) handleMouseDown(core.key, e);
                     else setSelectedZone(core.key);
                   }}
                 >
+                  {mergeSelection.includes(core.key) && (
+                    <div className="absolute -top-2 -right-2 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold z-30">✓</div>
+                  )}
                   <span className={core.key === "__worldtree" ? "text-6xl drop-shadow-lg" : core.key === "__mansion" ? "text-4xl drop-shadow" : "text-3xl opacity-70"}>
                     {core.emoji}
                   </span>
@@ -511,7 +560,7 @@ export default function MapPage() {
             {/* 일반 구역들 (핵심 구역 제외) */}
             {regularZones.map((zone) => {
               const pos = getPos(zone.name);
-              const isMergeSelected = mergeSelection.includes(zone.id);
+              const isMergeSelected = mergeSelection.includes(zone.name);
               return (
                 <div
                   key={zone.id}
@@ -527,7 +576,7 @@ export default function MapPage() {
                     transition: dragging === zone.name ? "none" : "box-shadow 0.2s, transform 0.2s",
                   }}
                   onMouseDown={(e) => {
-                    if (mergeMode) { e.preventDefault(); e.stopPropagation(); toggleMergeSelect(zone.id); }
+                    if (mergeMode) { e.preventDefault(); e.stopPropagation(); toggleMergeSelect(zone.name); }
                     else if (editMode) handleMouseDown(zone.name, e);
                     else setSelectedZone(zone.name);
                   }}
