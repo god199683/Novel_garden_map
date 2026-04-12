@@ -226,6 +226,22 @@ export default function MapPage() {
     setLayerMenu(null);
   };
 
+  const sendBackward = (key: string) => {
+    const currentZ = getZ(key);
+    const updated = { ...positions, [key]: { ...getPos(key), z: currentZ - 1 } };
+    setPositions(updated);
+    savePositions(updated);
+    setLayerMenu(null);
+  };
+
+  const bringForward = (key: string) => {
+    const currentZ = getZ(key);
+    const updated = { ...positions, [key]: { ...getPos(key), z: currentZ + 1 } };
+    setPositions(updated);
+    savePositions(updated);
+    setLayerMenu(null);
+  };
+
   // 해당 키가 속한 그룹 찾기
   const findGroup = useCallback((key: string) => groups.find((g) => g.members.includes(key)), [groups]);
 
@@ -723,6 +739,18 @@ export default function MapPage() {
               className="w-full text-left px-4 py-2 text-sm hover:bg-card-hover flex items-center gap-2"
             >
               <span className="text-xs">⬆️</span> 맨 앞으로
+            </button>
+            <button
+              onClick={() => bringForward(layerMenu.key)}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-card-hover flex items-center gap-2"
+            >
+              <span className="text-xs">🔼</span> 앞으로
+            </button>
+            <button
+              onClick={() => sendBackward(layerMenu.key)}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-card-hover flex items-center gap-2"
+            >
+              <span className="text-xs">🔽</span> 뒤로
             </button>
             <button
               onClick={() => sendToBack(layerMenu.key)}
