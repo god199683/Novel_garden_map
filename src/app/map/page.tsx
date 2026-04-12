@@ -135,6 +135,11 @@ export default function MapPage() {
   // 레이어 순서 컨텍스트 메뉴
   const [layerMenu, setLayerMenu] = useState<{ key: string; x: number; y: number } | null>(null);
 
+  // Undo/Redo
+  const [history, setHistory] = useState<Record<string, Position>[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const historyRef = useRef({ history: [] as Record<string, Position>[], index: -1 });
+
   // 마커 (범례/장식)
   const [markers, setMarkers] = useState<MapMarker[]>(DEFAULT_MARKERS);
   const [showMarkerForm, setShowMarkerForm] = useState(false);
@@ -187,6 +192,56 @@ export default function MapPage() {
     fetchData();
   }, []);
 
+  // Undo/Redo 히스토리 관리
+  const pushHistory = useCallback((pos: Record<string, Position>) => {
+    setHistory((prev) => {
+      const newHistory = [...prev.slice(0, historyRef.current.index + 1), structuredClone(pos)].slice(-50);
+      const newIndex = newHistory.length - 1;
+      historyRef.current = { history: newHistory, index: newIndex };
+      setHistoryIndex(newIndex);
+      return newHistory;
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    const { history: h, index: i } = historyRef.current;
+    if (i <= 0) return;
+    const newIndex = i - 1;
+    const restored = h[newIndex];
+    historyRef.current.index = newIndex;
+    setHistoryIndex(newIndex);
+    setPositions(restored);
+    savePositions(restored);
+  }, []);
+
+  const redo = useCallback(() => {
+    const { history: h, index: i } = historyRef.current;
+    if (i >= h.length - 1) return;
+    const newIndex = i + 1;
+    const restored = h[newIndex];
+    historyRef.current.index = newIndex;
+    setHistoryIndex(newIndex);
+    setPositions(restored);
+    savePositions(restored);
+  }, []);
+
+  // Ctrl+Z / Ctrl+Y 키보드 리스너
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!editMode) return;
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [editMode, undo, redo]);
+
   // 핵심이 아닌 일반 구역만
   const regularZones = zones.filter((z) => !CORE_ZONE_NAMES.includes(z.name));
   // 핵심 구역의 Zone 데이터 (있으면)
@@ -208,38 +263,29 @@ export default function MapPage() {
   }, [positions]);
 
   // 레이어 순서 변경
-  const sendToBack = (key: string) => {
-    const allZ = Object.values(positions).map((p) => p.z ?? 10);
-    const minZ = Math.min(...allZ);
-    const updated = { ...positions, [key]: { ...getPos(key), z: minZ - 1 } };
+  const applyLayerChange = (updated: Record<string, Position>) => {
     setPositions(updated);
     savePositions(updated);
+    pushHistory(updated);
     setLayerMenu(null);
+  };
+
+  const sendToBack = (key: string) => {
+    const allZ = Object.values(positions).map((p) => p.z ?? 10);
+    applyLayerChange({ ...positions, [key]: { ...getPos(key), z: Math.min(...allZ) - 1 } });
   };
 
   const bringToFront = (key: string) => {
     const allZ = Object.values(positions).map((p) => p.z ?? 10);
-    const maxZ = Math.max(...allZ);
-    const updated = { ...positions, [key]: { ...getPos(key), z: maxZ + 1 } };
-    setPositions(updated);
-    savePositions(updated);
-    setLayerMenu(null);
+    applyLayerChange({ ...positions, [key]: { ...getPos(key), z: Math.max(...allZ) + 1 } });
   };
 
   const sendBackward = (key: string) => {
-    const currentZ = getZ(key);
-    const updated = { ...positions, [key]: { ...getPos(key), z: currentZ - 1 } };
-    setPositions(updated);
-    savePositions(updated);
-    setLayerMenu(null);
+    applyLayerChange({ ...positions, [key]: { ...getPos(key), z: getZ(key) - 1 } });
   };
 
   const bringForward = (key: string) => {
-    const currentZ = getZ(key);
-    const updated = { ...positions, [key]: { ...getPos(key), z: currentZ + 1 } };
-    setPositions(updated);
-    savePositions(updated);
-    setLayerMenu(null);
+    applyLayerChange({ ...positions, [key]: { ...getPos(key), z: getZ(key) + 1 } });
   };
 
   // 해당 키가 속한 그룹 찾기
@@ -345,8 +391,8 @@ export default function MapPage() {
   const handleMouseUp = useCallback(() => {
     if (isPanning) { setIsPanning(false); return; }
     if (draggingMarker) { setDraggingMarker(null); saveMarkers(markers); return; }
-    if (dragging) { setDragging(null); savePositions(positions); }
-  }, [dragging, positions, isPanning, draggingMarker, markers]);
+    if (dragging) { setDragging(null); savePositions(positions); pushHistory(positions); }
+  }, [dragging, positions, isPanning, draggingMarker, markers, pushHistory]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -366,7 +412,7 @@ export default function MapPage() {
     [editMode, dragging, pan]
   );
 
-  const resetPositions = () => { setPositions({ ...DEFAULT_POSITIONS }); savePositions({ ...DEFAULT_POSITIONS }); };
+  const resetPositions = () => { const p = { ...DEFAULT_POSITIONS }; setPositions(p); savePositions(p); pushHistory(p); };
   const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
   const saveMapSize = (size: number) => {
